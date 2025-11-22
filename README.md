@@ -20,8 +20,8 @@ SwapCoverLayer is a purpose-built periphery contract for Uniswap V4 that:
 - Rewards **only swaps** — liquidity addition/removal receives zero rewards (eliminates farming bots)  
   **僅對 Swap 發放獎勵** — 加/減流動性永遠 0 獎勵（徹底杜絕刷量機器人）
 
-- Rewards are calculated purely from **stablecoin USD value** (USDC & USDT on Base)  
-  獎勵完全基於**穩定幣美元價值**計算（Base 鏈 USDC & USDT
+- Rewards are calculated purely from **stablecoin USD value**
+  獎勵完全基於**穩定幣美元價值**計算
 
 - Gasless swaps with **automatic fee burning** based on USD volume (default 1%, owner-adjustable)  
   手續費自動按 USD 交易量百分比燒毀（預設 1%，owner 可調整）
