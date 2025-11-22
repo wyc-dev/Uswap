@@ -9,16 +9,13 @@ This contract is a minimal, optimised Uniswap V4 periphery implementation that p
 |-------------------------------|-----------------------------------------------------------------------|
 | Type                          | Uniswap V4 `IUnlockCallback` Periphery (no hooks)                      |
 | Chain                         | Base Mainnet (Chain ID: 8453)                                         |
-| 鏈                            | Base 主網 (Chain ID: 8453)                                             |
 | PoolManager Address           | `0x7F4B8A79d8f8aC14E8A7B7d6A3E6715cE1d042F3`                           |
 | Version                       | v2.1.0 (maxRewardPerAction removed, ultimate minimalism)              |
-| 版本                          | v2.1.0（已移除 maxRewardPerAction，極致精簡）                           |
-| Current Date / Release        | November 22, 2025                                                     |
 
 ## Overview（概覽）
 
 SwapCoverLayer is a purpose-built periphery contract for Uniswap V4 that:
-SwapCoverLayer 是專為 Uniswap V4 打造的周邊合約，具備以下特性：
+專為 Uniswap V4 打造的中繼合約，具備以下特性：
 
 - Rewards **only swaps** — liquidity addition/removal receives zero rewards (eliminates farming bots)  
   **僅對 Swap 發放獎勵** — 加/減流動性永遠 0 獎勵（徹底杜絕刷量機器人）
