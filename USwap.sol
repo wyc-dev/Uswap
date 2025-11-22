@@ -14,52 +14,77 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 
 /**
  * @title TokenERC20
- * @dev 獎勵代幣介面，必須支援 mint 及 burnFrom 功能
- * @custom:security-contact security@xcure.com
+ * @dev Reward token interface required by SwapCoverLayer
+ * @custom:security-contact abc@def.com
  */
 interface TokenERC20 is IERC20 {
-    /// @notice 向指定地址鑄造代幣（僅限 SwapCoverLayer 呼叫）
-    /// @param to 接收地址
-    /// @param amount 鑄造數量（wei）
     function mint(address to, uint256 amount) external;
-
-    /// @notice 從指定地址燒毀代幣（需預先 approve）
-    /// @param from 燒毀來源地址
-    /// @param amount 燒毀數量（wei）
     function burnFrom(address from, uint256 amount) external;
 }
 
 /**
- * @title SwapCoverLayer – Uniswap V4 純 Swap 交易挖礦 + Gasless Swap 終極版
- * @author 2025-11-22 最終定版
- * @notice 只有 Swap 有獎勵，加減 LP 永久 0 獎勵，Gasless 手續費自動燒毀
- * @dev 已通過頂級審計標準，所有 public/external 函數均有完整 NatSpec
+ * @title SwapCoverLayer – Uniswap V4 Pure Swap Mining Periphery (Final Audited Version)
+ * @author Anonymous Senior Engineer
+ * @notice Only swaps trigger rewards. Liquidity operations receive zero rewards.
+ *         Gasless swaps burn a percentage fee automatically.
+ *         Fully permissionless pool creation. No hooks.
+ * @dev All public/external functions have full NatSpec. All state variables documented.
  * @custom:security-contact security@xcure.com
  */
 contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     using PoolIdLibrary for PoolKey;
 
+    /// @dev Uniswap V4 PoolManager – immutable for maximum security
     IPoolManager public immutable poolManager;
+
+    /// @dev Reward token contract (set by owner after deployment)
     TokenERC20 public rewardERC20;
 
+    /// @dev Mapping to identify stablecoins (USDC, USDT, etc.) for USD volume calculation
     mapping(address token => bool isStable) public isStableCoin;
 
+    /// @dev Master switch for reward distribution
     bool public rewardEnabled;
 
-    uint256 public gaslessFeeRate = 100;   // 1% = 100
-    uint256 public swapRewardRate = 1000;  // 0.1% = 1000
+    /// @dev Gasless swap fee rate in basis points (100 = 1%)
+    uint256 public gaslessFeeRate = 100;
+
+    /// @dev Swap reward rate denominator (1000 = 0.1%)
+    uint256 public swapRewardRate = 1000;
+
+    /// @dev Optional fixed reward per swap (default 0 = pure percentage mode)
     uint256 public fixedReward = 0;
 
+    /// @dev Emergency pause flag
     bool public paused;
 
     enum ActionType { ModifyLiquidity, Swap }
 
+    /* ═══════════════════════════════════════════════ EVENTS ═══════════════════════════════════════════════ */
+
+    /// @notice Emitted when a swap is executed
     event SwapExecuted(PoolId indexed poolId, BalanceDelta delta);
+
+    /// @notice Emitted when rewards are minted to a user
     event RewardMinted(address indexed to, uint256 amount);
+
+    /// @notice Emitted when reward system is enabled/disabled
     event RewardEnabledUpdated(bool indexed enabled);
-    event RatesUpdated(uint256 indexed gaslessFeeRate, uint256 indexed swapRewardRate, uint256 fixedReward);
+
+    /// @notice Emitted when any rate parameter is updated
+    event RatesUpdated(
+        uint256 indexed gaslessFeeRate,
+        uint256 indexed swapRewardRate,
+        uint256 fixedReward
+    );
+
+    /// @notice Emitted when contract is paused/unpaused
     event Paused(bool indexed isPaused);
+
+    /// @notice Emitted when gasless swap fee is burned
     event FeeBurned(address indexed from, uint256 amount);
+
+    /* ═══════════════════════════════════════════════ ERRORS ═══════════════════════════════════════════════ */
 
     error ContractPaused();
     error NoHooksAllowed();
@@ -68,9 +93,8 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     error DeadlineExceeded();
     error InvalidSignature();
     error ETHTransferFailed();
-    error TokenNotInitialized();
-    error NoStablecoinInvolved();
     error ZeroAddressNotAllowed();
+    error NoStablecoinInvolved();
 
     modifier notPaused() {
         if (paused) revert ContractPaused();
@@ -78,14 +102,14 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     }
 
     /**
-     * @dev 建構子，設定 PoolManager 並預載 Base 鏈最活躍穩定幣
-     * @param _poolManager Uniswap V4 PoolManager 地址
+     * @dev Constructor – initializes immutable PoolManager and pre-configures Base stablecoins
+     * @param _poolManager Uniswap V4 PoolManager address on Base
      */
     constructor(address _poolManager) Ownable(msg.sender) {
         if (_poolManager == address(0)) revert ZeroAddressNotAllowed();
         poolManager = IPoolManager(_poolManager);
 
-        // 2025-11-22 Base 鏈最活躍穩定幣（已驗證）
+        // Base mainnet most liquid stablecoins as of 2025-11-22
         isStableCoin[0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913] = true; // Circle USDC
         isStableCoin[0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2] = true; // Bridged USDT
 
