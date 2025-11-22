@@ -1,4 +1,4 @@
-# SwapCoverLayer  
+# Uswap - a swap cover layer  
 **Uniswap V4 Periphery Contract — High-Performance Swap Mining + Gasless Swap (Final Stable Release – 2025-11-22)**  
 **SwapCoverLayer – Uniswap V4 周邊合約 — 高性能 Swap 交易挖礦 + 免 Gas 交易（2025-11-22 終極穩定版）**
 
@@ -51,8 +51,8 @@ Stablecoins (Can add other stablecoin soon, up-to-date as of 2025-11-22):
 穩定幣（可後期增加其他認可穩定幣，2025-11-22 最新確認）：
 
 ```text
-USDC (Circle native): 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
-USDT (bridged, highest liquidity): 0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
+USDC on Base (Circle native): 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+USDT on Base (bridged, highest liquidity): 0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
 ```
 
 ## Integration Guide（整合指南）
