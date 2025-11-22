@@ -15,20 +15,27 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 /**
  * @title TokenERC20
  * @dev Reward token interface required by SwapCoverLayer
- * @custom:security-contact abc@def.com
+ * @custom:security-contact security@xcure.com
  */
 interface TokenERC20 is IERC20 {
+    /// @notice Mints `amount` tokens to `to` (only callable by SwapCoverLayer)
+    /// @param to Recipient address
+    /// @param amount Amount in wei
     function mint(address to, uint256 amount) external;
+
+    /// @notice Burns `amount` tokens from `from` (requires prior approval)
+    /// @param from Source address
+    /// @param amount Amount in wei
     function burnFrom(address from, uint256 amount) external;
 }
 
 /**
- * @title SwapCoverLayer – Uniswap V4 Pure Swap Mining Periphery (Final Audited Version)
+ * @title SwapCoverLayer – Uniswap V4 Pure Swap Mining Periphery
  * @author Anonymous Senior Engineer
  * @notice Only swaps trigger rewards. Liquidity operations receive zero rewards.
- *         Gasless swaps burn a percentage fee automatically.
- *         Fully permissionless pool creation. No hooks.
- * @dev All public/external functions have full NatSpec. All state variables documented.
+ *         Gasless swaps automatically burn a percentage fee.
+ *         Fully permissionless pool creation. No hooks allowed.
+ * @dev Final audited version – all NatSpec complete (state vars, events, errors, every function)
  * @custom:security-contact security@xcure.com
  */
 contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
@@ -40,7 +47,7 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     /// @dev Reward token contract (set by owner after deployment)
     TokenERC20 public rewardERC20;
 
-    /// @dev Mapping to identify stablecoins (USDC, USDT, etc.) for USD volume calculation
+    /// @dev Stablecoin whitelist for USD volume calculation (USDC, USDT, etc.)
     mapping(address token => bool isStable) public isStableCoin;
 
     /// @dev Master switch for reward distribution
@@ -62,7 +69,7 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
 
     /* ═══════════════════════════════════════════════ EVENTS ═══════════════════════════════════════════════ */
 
-    /// @notice Emitted when a swap is executed
+    /// @notice Emitted when a swap is executed and rewards calculated
     event SwapExecuted(PoolId indexed poolId, BalanceDelta delta);
 
     /// @notice Emitted when rewards are minted to a user
@@ -102,14 +109,13 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     }
 
     /**
-     * @dev Constructor – initializes immutable PoolManager and pre-configures Base stablecoins
+     * @dev Constructor – initializes immutable PoolManager and preloads Base stablecoins
      * @param _poolManager Uniswap V4 PoolManager address on Base
      */
     constructor(address _poolManager) Ownable(msg.sender) {
         if (_poolManager == address(0)) revert ZeroAddressNotAllowed();
         poolManager = IPoolManager(_poolManager);
 
-        // Base mainnet most liquid stablecoins as of 2025-11-22
         isStableCoin[0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913] = true; // Circle USDC
         isStableCoin[0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2] = true; // Bridged USDT
 
@@ -119,17 +125,17 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     /* ═════════════════════════════════════ OWNER FUNCTIONS ═════════════════════════════════════ */
 
     /**
-     * @notice 新增或移除穩定幣標記
-     * @param token 代幣地址
-     * @param status true = 是穩定幣
+     * @notice Add or remove a token from the stablecoin whitelist
+     * @param token Token address
+     * @param status True if stablecoin
      */
     function setStableCoin(address token, bool status) external onlyOwner {
         isStableCoin[token] = status;
     }
 
     /**
-     * @notice 緊急暫停合約
-     * @param _paused true = 暫停
+     * @notice Emergency pause/unpause all user operations
+     * @param _paused True to pause
      */
     function setPaused(bool _paused) external onlyOwner {
         paused = _paused;
@@ -137,8 +143,8 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     }
 
     /**
-     * @notice 設定獎勵代幣合約
-     * @param newToken 獎勵代幣地址
+     * @notice Set the reward token contract
+     * @param newToken Reward token address
      */
     function updateRewardToken(address newToken) external onlyOwner {
         if (newToken == address(0)) revert ZeroAddressNotAllowed();
@@ -146,8 +152,8 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     }
 
     /**
-     * @notice 開關獎勵功能
-     * @param enabled true = 開啟
+     * @notice Enable or disable reward distribution
+     * @param enabled True to enable rewards
      */
     function setRewardEnabled(bool enabled) external onlyOwner {
         rewardEnabled = enabled;
@@ -155,10 +161,10 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     }
 
     /**
-     * @notice 統一調整三個比率
-     * @param newGaslessFeeRate Gasless 手續費率 (100 = 1%)
-     * @param newSwapRewardRate Swap 獎勵率 (1000 = 0.1%)
-     * @param newFixedReward 每筆固定獎勵（可設 0）
+     * @notice Update all reward and fee rates in one transaction
+     * @param newGaslessFeeRate Gasless fee rate (100 = 1%)
+     * @param newSwapRewardRate Swap reward rate (1000 = 0.1%)
+     * @param newFixedReward Fixed reward per swap (0 for pure percentage)
      */
     function setRewardRates(
         uint256 newGaslessFeeRate,
@@ -174,50 +180,61 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     /* ═════════════════════════════════════ PUBLIC FUNCTIONS ═════════════════════════════════════ */
 
     /**
-     * @notice 任何人都可開新池（完全無許可）
-     * @param key PoolKey
-     * @param sqrtPriceX96 初始價格
-     * @return tick 初始 tick
+     * @notice Permissionless pool initialization (no hooks allowed)
+     * @param key The PoolKey defining the pool
+     * @param sqrtPriceX96 Initial sqrt price
+     * @return tick The initialized tick
      */
-    function initializePool(PoolKey calldata key, uint160 sqrtPriceX96) external notPaused returns (int24 tick) {
+    function initializePool(PoolKey calldata key, uint160 sqrtPriceX96) external notPaused returns (int24) {
         if (address(key.hooks) != address(0)) revert NoHooksAllowed();
-        tick = poolManager.initialize(key, sqrtPriceX96);
+        int24 tick = poolManager.initialize(key, sqrtPriceX96);
+        return tick;
     }
 
     /**
-     * @notice 加/減流動性（無獎勵）
-     * @return callerDelta 呼叫者資產變動
-     * @return feesAccrued 累積手續費
+     * @notice Add or remove liquidity (no rewards)
+     * @param key Pool key
+     * @param params Liquidity modification parameters
+     * @param hookData Data forwarded to hooks (unused)
+     * @return callerDelta Delta for the caller
+     * @return feesAccrued Accrued fees
      */
     function modifyLiquidity(
         PoolKey calldata key,
         IPoolManager.ModifyLiquidityParams calldata params,
         bytes calldata hookData
-    ) external nonReentrant notPaused returns (BalanceDelta callerDelta, BalanceDelta feesAccrued) {
+    ) external nonReentrant notPaused returns (BalanceDelta, BalanceDelta) {
         bytes memory data = abi.encode(msg.sender, ActionType.ModifyLiquidity, key, abi.encode(params), hookData);
         bytes memory result = poolManager.unlock(data);
-        return abi.decode(result, (BalanceDelta, BalanceDelta));
+        (BalanceDelta callerDelta, BalanceDelta feesAccrued) = abi.decode(result, (BalanceDelta, BalanceDelta));
+        return (callerDelta, feesAccrued);
     }
 
     /**
-     * @notice 普通 Swap（唯一有獎勵的操作）
-     * @return delta Swap 後資產變動
+     * @notice Execute a swap (only operation that triggers rewards)
+     * @param key Pool key
+     * @param params Swap parameters
+     * @param hookData Data forwarded to hooks (unused)
+     * @return delta Balance delta from the swap
      */
     function swap(
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
         bytes calldata hookData
-    ) external nonReentrant notPaused returns (BalanceDelta delta) {
+    ) external nonReentrant notPaused returns (BalanceDelta) {
         bytes memory data = abi.encode(msg.sender, ActionType.Swap, key, abi.encode(params), hookData);
         bytes memory result = poolManager.unlock(data);
-        return abi.decode(result, (BalanceDelta));
+        BalanceDelta delta = abi.decode(result, (BalanceDelta));
+        return delta;
     }
 
     /**
-     * @dev 內部函數：計算本次交易涉及的穩定幣美元價值（USD volume）
-     * @return usd 美元價值（6 decimals）
+     * @dev Internal function – calculates USD volume from stablecoin leg of a swap
+     * @param key The pool key
+     * @param delta BalanceDelta from the swap
+     * @return usd USD volume in 6 decimals
      */
-    function _getUsdAmountFromDelta(PoolKey memory key, BalanceDelta delta) internal view returns (uint256 usd) {
+    function _getUsdAmountFromDelta(PoolKey memory key, BalanceDelta delta) private view returns (uint256 usd) {
         int128 raw0 = delta.amount0();
         int128 raw1 = delta.amount1();
 
@@ -240,9 +257,11 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     }
 
     /**
-     * @dev V4 核心回調，所有獎勵邏輯在此原子執行
+     * @dev Core Uniswap V4 callback – all rewards are distributed atomically here
+     * @param data Encoded caller address and action
+     * @return result Encoded result to return to PoolManager
      */
-    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
+    function unlockCallback(bytes calldata data) external override returns (bytes memory result) {
         if (msg.sender != address(poolManager)) revert UnauthorizedCaller();
 
         (address caller, ActionType action, PoolKey memory key, bytes memory paramsData, bytes memory hookData) = abi.decode(
@@ -278,8 +297,16 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     /* ═════════════════════════════════ GASLESS SWAP ═════════════════════════════════ */
 
     /**
-     * @notice 驗證 Gasless Swap 簽名
-     * @return 是否有效
+     * @notice Verify EIP-712 signature for gasless swap
+     * @param caller Original user address
+     * @param key Pool key
+     * @param swapParams Swap parameters
+     * @param hookData Hook data (unused)
+     * @param deadline Signature deadline
+     * @param v Recovery byte
+     * @param r Signature r
+     * @param s Signature s
+     * @return True if signature is valid
      */
     function verifySwapSignature(
         address caller,
@@ -309,8 +336,17 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
     }
 
     /**
-     * @notice Gasless Swap 入口（免 gas + 自動燒手續費）
-     * @return delta Swap 結果
+     * @notice Execute gasless swap (user signs, relayer pays gas)
+     * @dev Must involve stablecoin or transaction will revert (saves relayer gas)
+     * @param caller Original user address
+     * @param key Pool key
+     * @param swapParams Swap parameters
+     * @param hookData Hook data (unused)
+     * @param deadline Signature deadline
+     * @param v Recovery byte
+     * @param r Signature r
+     * @param s Signature s
+     * @return delta Balance delta from the swap
      */
     function executeGaslessSwap(
         address caller,
@@ -341,23 +377,36 @@ contract SwapCoverLayer is Ownable, ReentrancyGuard, IUnlockCallback {
 
     /* ═════════════════════════════════ ADMIN ═════════════════════════════════ */
 
-    /// @notice Owner 提取合約內 ETH
+    /**
+     * @notice Owner withdraws ETH accidentally sent to contract
+     * @param amount Amount to withdraw
+     */
     function withdrawETH(uint256 amount) external onlyOwner {
         (bool success, ) = payable(owner()).call{value: amount}("");
         if (!success) revert ETHTransferFailed();
     }
 
-    /// @notice Owner 提取合約內任意 ERC20
+    /**
+     * @notice Owner withdraws any ERC20 accidentally sent to contract
+     * @param token Token address
+     * @param amount Amount to withdraw
+     */
     function withdrawERC20(address token, uint256 amount) external onlyOwner {
         IERC20(token).transfer(owner(), amount);
     }
 
-    /// @notice 查詢獎勵代幣是否已設定
+    /**
+     * @notice Check if reward token is set
+     * @return True if rewardERC20 is configured
+     */
     function isRewardTokenEnabled() external view returns (bool) {
         return address(rewardERC20) != address(0);
     }
 
-    /// @notice EIP-712 Domain Separator
+    /**
+     * @notice Returns EIP-712 domain separator
+     * @return Domain separator hash
+     */
     function DOMAIN_SEPARATOR() public view returns (bytes32) {
         return keccak256(abi.encode(
             keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
